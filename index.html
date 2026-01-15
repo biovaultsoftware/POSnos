@@ -196,7 +196,7 @@
             }
 
             // 3. Process via Council
-            const response = council.processMessage(text, currentCharacter);
+            const response = await council.processMessage(text, currentCharacter);
             
             // CRITICAL FIX: Protocol requires 1000ms between blocks.
             // We wait 1200ms + random to ensure we never hit the rate limit.
