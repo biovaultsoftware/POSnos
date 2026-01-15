@@ -44,7 +44,7 @@ export {
   detectCategory
 } from './tvm.js';
 
-// AI Council
+// AI Council - FIXED IMPORTS HERE
 export { 
   AICouncil, 
   council,
