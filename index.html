@@ -50,8 +50,7 @@
 
             <div class="card council-list">
                 <h3>AI Council</h3>
-                <div id="council-grid" class="council-grid">
-                    </div>
+                <div id="council-grid" class="council-grid"></div>
             </div>
         </aside>
 
@@ -86,29 +85,21 @@
     <script type="module">
         import { initializeApp, STA_TYPES, council } from './src/index.js';
         
-        // --- App State ---
         let app = null;
         let currentCharacter = 'hakim';
 
-        // --- Initialization ---
         async function init() {
             try {
-                // Initialize the OS
-                app = await initializeApp({
-                    verifyIntegrity: true,
-                    requireBiometric: false 
-                });
-
-                // Load initial data
+                app = await initializeApp({ verifyIntegrity: true, requireBiometric: false });
                 updateUI();
                 renderCouncil();
                 
-                // Add initial greeting
                 addMessage('system', `Identity Loaded: ${app.hid}`);
+                
+                // Initial greeting from active character
                 const greeting = council.getCharacter(currentCharacter).sampleResponses[0];
                 addMessage('assistant', greeting, currentCharacter);
 
-                // Start Timer
                 setInterval(updateTimer, 1000);
 
             } catch (e) {
@@ -117,11 +108,8 @@
             }
         }
 
-        // --- UI Updates ---
         async function updateUI() {
             if (!app) return;
-
-            // 1. Update Balance & Scores
             const balance = await app.getTVMBalance();
             const richScore = app.getRichScore();
             const caps = await app.getCaps();
@@ -129,12 +117,9 @@
             document.getElementById('tvm-balance').textContent = balance.toFixed(2);
             document.getElementById('rich-score').textContent = richScore;
             
-            // 2. Update Caps
             const dailyPercent = Math.min(100, (caps.daily / caps.limits.daily) * 100);
             document.getElementById('daily-cap-text').textContent = `${caps.daily} / ${caps.limits.daily}`;
             document.getElementById('daily-cap-fill').style.width = `${dailyPercent}%`;
-
-            // 3. Update Theme
             document.body.className = `theme-${app.getTheme()}`;
         }
 
@@ -147,12 +132,10 @@
             const h = Math.floor(diff / (1000 * 60 * 60)).toString().padStart(2, '0');
             const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)).toString().padStart(2, '0');
             const s = Math.floor((diff % (1000 * 60)) / 1000).toString().padStart(2, '0');
-            
             document.getElementById('reset-timer').textContent = `${h}:${m}:${s}`;
         }
 
-        // --- Chat Functions ---
-        function addMessage(role, text, charId = null) {
+        function addMessage(role, text, charId = null, isError = false) {
             const history = document.getElementById('chat-history');
             const msgDiv = document.createElement('div');
             msgDiv.className = `message ${role}`;
@@ -161,12 +144,13 @@
                 const char = council.getCharacter(charId);
                 const avatar = document.createElement('div');
                 avatar.className = 'avatar';
-                avatar.textContent = char.emoji;
+                avatar.textContent = char ? char.emoji : '🤖';
                 msgDiv.appendChild(avatar);
             }
 
             const bubble = document.createElement('div');
             bubble.className = 'bubble';
+            if (isError) bubble.style.borderColor = '#ff4b4b'; // Visual error cue
             bubble.textContent = text;
             msgDiv.appendChild(bubble);
 
@@ -179,26 +163,31 @@
             const text = input.value.trim();
             if (!text) return;
 
-            // 1. Add User Message to UI
             addMessage('user', text);
             input.value = '';
 
-            // 2. Commit User Action to Chain
-            await app.commitAction(STA_TYPES.CHAT_USER, {
+            // 1. Commit User Action
+            const userResult = await app.commitAction(STA_TYPES.CHAT_USER, {
                 chatId: currentCharacter,
                 text: text,
                 role: 'user'
             });
 
-            // 3. Process via Council (Kill Switch Check)
+            if (!userResult.ok) {
+                addMessage('system', `Error saving message: ${userResult.reason}`, null, true);
+                return;
+            }
+
+            // 2. Process AI Response
             const response = council.processMessage(text, currentCharacter);
             
-            // Simulate "Typing" delay
+            // FIX: Ensure delay > 1000ms to bypass Rule 3 (Rate Limit) since we are self-signing
+            const minDelay = 1200; 
+            const typingDelay = minDelay + Math.random() * 800;
+
             setTimeout(async () => {
-                addMessage('assistant', response.response, response.character);
-                
-                // 4. Commit AI Response to Chain
-                await app.commitAction(STA_TYPES.AI_ADVICE, {
+                // 3. Commit AI Response
+                const aiResult = await app.commitAction(STA_TYPES.AI_ADVICE, {
                     chatId: currentCharacter,
                     selectedCharacter: response.character,
                     text: response.response,
@@ -206,16 +195,19 @@
                     bubbles: [response.response]
                 });
 
-                // Update Stats (caps incremented)
-                updateUI();
-            }, 600 + Math.random() * 500);
+                if (aiResult.ok) {
+                    addMessage('assistant', response.response, response.character);
+                    updateUI(); // Update caps only on success
+                } else {
+                    console.error("AI Commit Failed:", aiResult);
+                    addMessage('system', `Network Rejected Response: ${aiResult.reason} (Wait 1s)`, null, true);
+                }
+            }, typingDelay);
         }
 
-        // --- Council Functions ---
         function renderCouncil() {
             const grid = document.getElementById('council-grid');
             grid.innerHTML = '';
-            
             const members = council.getAllCharacters();
             members.forEach(member => {
                 const btn = document.createElement('div');
@@ -229,16 +221,13 @@
         function switchMentor(charId) {
             currentCharacter = charId;
             const char = council.getCharacter(charId);
-            
             document.getElementById('mentor-name').textContent = char.name;
             document.getElementById('mentor-emoji').textContent = char.emoji;
             document.getElementById('mentor-role').textContent = `${char.motivator.toUpperCase()} Mentor`;
-            
             renderCouncil();
             addMessage('system', `Switched to ${char.name}.`);
         }
 
-        // --- Event Listeners ---
         document.getElementById('send-btn').addEventListener('click', handleSend);
         document.getElementById('user-input').addEventListener('keypress', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -247,7 +236,6 @@
             }
         });
 
-        // Run
         init();
     </script>
 </body>
