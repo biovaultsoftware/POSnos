@@ -49,9 +49,7 @@ export {
   AICouncil, 
   council,
   checkKillSwitch,
-  CHARACTER_PROMPTS,
-  KILL_SWITCH_PROMPT,
-  BLOCKED_TOPICS
+  CHARACTER_PROMPTS
 } from './council.js';
 
 // ECF Pricing
