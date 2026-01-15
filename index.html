@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sovereign Business OS v2.0</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.json">
+</head>
+<body class="theme-coal">
+    <div id="app">
+        <aside class="sidebar">
+            <div class="logo-area">
+                <h1>BALANCE<span>CHAIN</span></h1>
+                <div class="connection-status">
+                    <span id="p2p-status" class="dot"></span> <span id="p2p-text">Offline</span>
+                </div>
+            </div>
+
+            <div class="card dashboard">
+                <div class="metric">
+                    <label>TVM Balance</label>
+                    <div class="value" id="tvm-balance">0.00</div>
+                </div>
+                <div class="scores">
+                    <div class="score-box">
+                        <label>Rich Score</label>
+                        <div class="value" id="rich-score">0</div>
+                    </div>
+                    <div class="score-box">
+                        <label>Biz Score</label>
+                        <div class="value" id="biz-score">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card caps">
+                <h3>Daily Caps</h3>
+                <div class="cap-item">
+                    <div class="cap-label">
+                        <span>Segments</span>
+                        <span id="daily-cap-text">0 / 3600</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="fill" id="daily-cap-fill" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="timer">Reset in: <span id="reset-timer">00:00:00</span></div>
+            </div>
+
+            <div class="card council-list">
+                <h3>AI Council</h3>
+                <div id="council-grid" class="council-grid">
+                    </div>
+            </div>
+        </aside>
+
+        <main class="chat-interface">
+            <header class="chat-header">
+                <div class="current-mentor">
+                    <span id="mentor-emoji">📜</span>
+                    <div class="mentor-info">
+                        <h2 id="mentor-name">Hakim</h2>
+                        <span id="mentor-role">The Wisdom Mentor</span>
+                    </div>
+                </div>
+                <div class="actions">
+                    <button id="btn-mint" disabled>Mint Capsule</button>
+                    <button id="btn-settings">⚙️</button>
+                </div>
+            </header>
+
+            <div id="chat-history" class="chat-history">
+                <div class="message system">
+                    <div class="bubble">Initializing Sovereign Business OS v2.0...</div>
+                </div>
+            </div>
+
+            <div class="chat-input-area">
+                <textarea id="user-input" placeholder="Ask the council... (Type 'Politics' to test Kill Switch)" rows="1"></textarea>
+                <button id="send-btn">Send</button>
+            </div>
+        </main>
+    </div>
+
+    <script type="module">
+        import { initializeApp, STA_TYPES, council } from './src/index.js';
+        
+        // --- App State ---
+        let app = null;
+        let currentCharacter = 'hakim';
+
+        // --- Initialization ---
+        async function init() {
+            try {
+                // Initialize the OS
+                app = await initializeApp({
+                    verifyIntegrity: true,
+                    requireBiometric: false 
+                });
+
+                // Load initial data
+                updateUI();
+                renderCouncil();
+                
+                // Add initial greeting
+                addMessage('system', `Identity Loaded: ${app.hid}`);
+                const greeting = council.getCharacter(currentCharacter).sampleResponses[0];
+                addMessage('assistant', greeting, currentCharacter);
+
+                // Start Timer
+                setInterval(updateTimer, 1000);
+
+            } catch (e) {
+                console.error("Critical Error:", e);
+                addMessage('system', `CRITICAL ERROR: ${e.message}`);
+            }
+        }
+
+        // --- UI Updates ---
+        async function updateUI() {
+            if (!app) return;
+
+            // 1. Update Balance & Scores
+            const balance = await app.getTVMBalance();
+            const richScore = app.getRichScore();
+            const caps = await app.getCaps();
+
+            document.getElementById('tvm-balance').textContent = balance.toFixed(2);
+            document.getElementById('rich-score').textContent = richScore;
+            
+            // 2. Update Caps
+            const dailyPercent = Math.min(100, (caps.daily / caps.limits.daily) * 100);
+            document.getElementById('daily-cap-text').textContent = `${caps.daily} / ${caps.limits.daily}`;
+            document.getElementById('daily-cap-fill').style.width = `${dailyPercent}%`;
+
+            // 3. Update Theme
+            document.body.className = `theme-${app.getTheme()}`;
+        }
+
+        function updateTimer() {
+            const now = new Date();
+            const tomorrow = new Date(now);
+            tomorrow.setUTCHours(24, 0, 0, 0);
+            const diff = tomorrow - now;
+            
+            const h = Math.floor(diff / (1000 * 60 * 60)).toString().padStart(2, '0');
+            const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)).toString().padStart(2, '0');
+            const s = Math.floor((diff % (1000 * 60)) / 1000).toString().padStart(2, '0');
+            
+            document.getElementById('reset-timer').textContent = `${h}:${m}:${s}`;
+        }
+
+        // --- Chat Functions ---
+        function addMessage(role, text, charId = null) {
+            const history = document.getElementById('chat-history');
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${role}`;
+            
+            if (charId && role === 'assistant') {
+                const char = council.getCharacter(charId);
+                const avatar = document.createElement('div');
+                avatar.className = 'avatar';
+                avatar.textContent = char.emoji;
+                msgDiv.appendChild(avatar);
+            }
+
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble';
+            bubble.textContent = text;
+            msgDiv.appendChild(bubble);
+
+            history.appendChild(msgDiv);
+            history.scrollTop = history.scrollHeight;
+        }
+
+        async function handleSend() {
+            const input = document.getElementById('user-input');
+            const text = input.value.trim();
+            if (!text) return;
+
+            // 1. Add User Message to UI
+            addMessage('user', text);
+            input.value = '';
+
+            // 2. Commit User Action to Chain
+            await app.commitAction(STA_TYPES.CHAT_USER, {
+                chatId: currentCharacter,
+                text: text,
+                role: 'user'
+            });
+
+            // 3. Process via Council (Kill Switch Check)
+            const response = council.processMessage(text, currentCharacter);
+            
+            // Simulate "Typing" delay
+            setTimeout(async () => {
+                addMessage('assistant', response.response, response.character);
+                
+                // 4. Commit AI Response to Chain
+                await app.commitAction(STA_TYPES.AI_ADVICE, {
+                    chatId: currentCharacter,
+                    selectedCharacter: response.character,
+                    text: response.response,
+                    mode: 'chat',
+                    bubbles: [response.response]
+                });
+
+                // Update Stats (caps incremented)
+                updateUI();
+            }, 600 + Math.random() * 500);
+        }
+
+        // --- Council Functions ---
+        function renderCouncil() {
+            const grid = document.getElementById('council-grid');
+            grid.innerHTML = '';
+            
+            const members = council.getAllCharacters();
+            members.forEach(member => {
+                const btn = document.createElement('div');
+                btn.className = `council-member ${member.id === currentCharacter ? 'active' : ''}`;
+                btn.innerHTML = `<span class="emoji">${member.emoji}</span><span class="name">${member.name}</span>`;
+                btn.onclick = () => switchMentor(member.id);
+                grid.appendChild(btn);
+            });
+        }
+
+        function switchMentor(charId) {
+            currentCharacter = charId;
+            const char = council.getCharacter(charId);
+            
+            document.getElementById('mentor-name').textContent = char.name;
+            document.getElementById('mentor-emoji').textContent = char.emoji;
+            document.getElementById('mentor-role').textContent = `${char.motivator.toUpperCase()} Mentor`;
+            
+            renderCouncil();
+            addMessage('system', `Switched to ${char.name}.`);
+        }
+
+        // --- Event Listeners ---
+        document.getElementById('send-btn').addEventListener('click', handleSend);
+        document.getElementById('user-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+            }
+        });
+
+        // Run
+        init();
+    </script>
+</body>
+</html>
