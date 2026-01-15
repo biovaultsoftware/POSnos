@@ -82,24 +82,34 @@
         </main>
     </div>
 
-    <script type="module">
+<script type="module">
         import { initializeApp, STA_TYPES, council } from './src/index.js';
         
+        // --- App State ---
         let app = null;
         let currentCharacter = 'hakim';
 
+        // --- Initialization ---
         async function init() {
             try {
-                app = await initializeApp({ verifyIntegrity: true, requireBiometric: false });
+                // Initialize the OS
+                app = await initializeApp({
+                    verifyIntegrity: true,
+                    requireBiometric: false 
+                });
+
                 updateUI();
                 renderCouncil();
                 
                 addMessage('system', `Identity Loaded: ${app.hid}`);
                 
-                // Initial greeting from active character
-                const greeting = council.getCharacter(currentCharacter).sampleResponses[0];
+                // Initial greeting
+                const char = council.getCharacter(currentCharacter);
+                // Pick a random greeting to ensure variety on load
+                const greeting = char.sampleResponses[Math.floor(Math.random() * char.sampleResponses.length)];
                 addMessage('assistant', greeting, currentCharacter);
 
+                // Start Timer
                 setInterval(updateTimer, 1000);
 
             } catch (e) {
@@ -108,6 +118,7 @@
             }
         }
 
+        // --- UI Updates ---
         async function updateUI() {
             if (!app) return;
             const balance = await app.getTVMBalance();
@@ -132,6 +143,7 @@
             const h = Math.floor(diff / (1000 * 60 * 60)).toString().padStart(2, '0');
             const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)).toString().padStart(2, '0');
             const s = Math.floor((diff % (1000 * 60)) / 1000).toString().padStart(2, '0');
+            
             document.getElementById('reset-timer').textContent = `${h}:${m}:${s}`;
         }
 
@@ -150,7 +162,10 @@
 
             const bubble = document.createElement('div');
             bubble.className = 'bubble';
-            if (isError) bubble.style.borderColor = '#ff4b4b'; // Visual error cue
+            if (isError) {
+                bubble.style.border = '1px solid #ff4b4b';
+                bubble.style.color = '#ff4b4b';
+            }
             bubble.textContent = text;
             msgDiv.appendChild(bubble);
 
@@ -163,10 +178,11 @@
             const text = input.value.trim();
             if (!text) return;
 
+            // 1. Add User Message immediately
             addMessage('user', text);
             input.value = '';
 
-            // 1. Commit User Action
+            // 2. Commit User Action to Chain
             const userResult = await app.commitAction(STA_TYPES.CHAT_USER, {
                 chatId: currentCharacter,
                 text: text,
@@ -174,19 +190,22 @@
             });
 
             if (!userResult.ok) {
+                console.error("User commit failed:", userResult);
                 addMessage('system', `Error saving message: ${userResult.reason}`, null, true);
                 return;
             }
 
-            // 2. Process AI Response
+            // 3. Process via Council
             const response = council.processMessage(text, currentCharacter);
             
-            // FIX: Ensure delay > 1000ms to bypass Rule 3 (Rate Limit) since we are self-signing
-            const minDelay = 1200; 
-            const typingDelay = minDelay + Math.random() * 800;
+            // CRITICAL FIX: Protocol requires 1000ms between blocks.
+            // We wait 1200ms + random to ensure we never hit the rate limit.
+            const protocolDelay = 1200; 
+            const thinkingDelay = Math.random() * 800;
+            const totalDelay = protocolDelay + thinkingDelay;
 
             setTimeout(async () => {
-                // 3. Commit AI Response
+                // 4. Commit AI Response to Chain
                 const aiResult = await app.commitAction(STA_TYPES.AI_ADVICE, {
                     chatId: currentCharacter,
                     selectedCharacter: response.character,
@@ -197,17 +216,24 @@
 
                 if (aiResult.ok) {
                     addMessage('assistant', response.response, response.character);
-                    updateUI(); // Update caps only on success
+                    updateUI(); 
                 } else {
-                    console.error("AI Commit Failed:", aiResult);
-                    addMessage('system', `Network Rejected Response: ${aiResult.reason} (Wait 1s)`, null, true);
+                    console.error("AI Validation Failed:", aiResult);
+                    // If rate limit hit, tell user to wait
+                    if (aiResult.reason === 'rate_limit') {
+                        addMessage('system', "System cooling down... please wait 1s.", null, true);
+                    } else {
+                        addMessage('system', `Chain rejected response: ${aiResult.reason}`, null, true);
+                    }
                 }
-            }, typingDelay);
+            }, totalDelay);
         }
 
+        // --- Council Functions ---
         function renderCouncil() {
             const grid = document.getElementById('council-grid');
             grid.innerHTML = '';
+            
             const members = council.getAllCharacters();
             members.forEach(member => {
                 const btn = document.createElement('div');
@@ -221,13 +247,19 @@
         function switchMentor(charId) {
             currentCharacter = charId;
             const char = council.getCharacter(charId);
+            
             document.getElementById('mentor-name').textContent = char.name;
             document.getElementById('mentor-emoji').textContent = char.emoji;
             document.getElementById('mentor-role').textContent = `${char.motivator.toUpperCase()} Mentor`;
+            
             renderCouncil();
-            addMessage('system', `Switched to ${char.name}.`);
+            
+            // Random greeting on switch
+            const greeting = char.sampleResponses[Math.floor(Math.random() * char.sampleResponses.length)];
+            addMessage('assistant', greeting, charId);
         }
 
+        // --- Event Listeners ---
         document.getElementById('send-btn').addEventListener('click', handleSend);
         document.getElementById('user-input').addEventListener('keypress', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -236,6 +268,9 @@
             }
         });
 
+        // Run
+        init();
+    </script>
         init();
     </script>
 </body>
