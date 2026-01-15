@@ -103,10 +103,9 @@
                 
                 addMessage('system', `Identity Loaded: ${app.hid}`);
                 
-                // Initial greeting
+                // Initial greeting (Offline safe)
                 const char = council.getCharacter(currentCharacter);
-                // Pick a random greeting to ensure variety on load
-                const greeting = char.sampleResponses[Math.floor(Math.random() * char.sampleResponses.length)];
+                const greeting = char.sampleResponses[0];
                 addMessage('assistant', greeting, currentCharacter);
 
                 // Start Timer
@@ -131,6 +130,8 @@
             const dailyPercent = Math.min(100, (caps.daily / caps.limits.daily) * 100);
             document.getElementById('daily-cap-text').textContent = `${caps.daily} / ${caps.limits.daily}`;
             document.getElementById('daily-cap-fill').style.width = `${dailyPercent}%`;
+            
+            // Theme update
             document.body.className = `theme-${app.getTheme()}`;
         }
 
@@ -163,10 +164,11 @@
             const bubble = document.createElement('div');
             bubble.className = 'bubble';
             if (isError) {
-                bubble.style.border = '1px solid #ff4b4b';
+                bubble.style.borderColor = '#ff4b4b';
                 bubble.style.color = '#ff4b4b';
             }
-            bubble.textContent = text;
+            // Protect against undefined text from network errors
+            bubble.textContent = text || "(No response data)";
             msgDiv.appendChild(bubble);
 
             history.appendChild(msgDiv);
@@ -178,11 +180,11 @@
             const text = input.value.trim();
             if (!text) return;
 
-            // 1. Add User Message immediately
-            addMessage('user', text);
+            // 1. Clear input & Show User Message
             input.value = '';
+            addMessage('user', text);
 
-            // 2. Commit User Action to Chain
+            // 2. Commit User Action (Chain)
             const userResult = await app.commitAction(STA_TYPES.CHAT_USER, {
                 chatId: currentCharacter,
                 text: text,
@@ -190,43 +192,44 @@
             });
 
             if (!userResult.ok) {
-                console.error("User commit failed:", userResult);
-                addMessage('system', `Error saving message: ${userResult.reason}`, null, true);
+                addMessage('system', `Chain Error: ${userResult.reason}`, null, true);
                 return;
             }
 
-            // 3. Process via Council
-            const response = await council.processMessage(text, currentCharacter);
-            
-            // CRITICAL FIX: Protocol requires 1000ms between blocks.
-            // We wait 1200ms + random to ensure we never hit the rate limit.
-            const protocolDelay = 1200; 
-            const thinkingDelay = Math.random() * 800;
-            const totalDelay = protocolDelay + thinkingDelay;
+            // 3. Show "Typing..." state (Optional but good UX)
+            // const typingIndicator = addMessage('system', 'Council is thinking...');
 
-            setTimeout(async () => {
-                // 4. Commit AI Response to Chain
-                const aiResult = await app.commitAction(STA_TYPES.AI_ADVICE, {
-                    chatId: currentCharacter,
-                    selectedCharacter: response.character,
-                    text: response.response,
-                    mode: 'chat',
-                    bubbles: [response.response]
-                });
+            // 4. Process via Council (NOW WITH AWAIT)
+            try {
+                //CRITICAL FIX: This 'await' makes the browser wait for the network
+                const response = await council.processMessage(text, currentCharacter);
+                
+                // 5. Commit AI Response (Chain)
+                // We add a slight delay to ensure we don't hit the 1-block/sec rate limit
+                // since both User and AI blocks are signed by YOU in this version.
+                setTimeout(async () => {
+                    const aiResult = await app.commitAction(STA_TYPES.AI_ADVICE, {
+                        chatId: currentCharacter,
+                        selectedCharacter: response.character,
+                        text: response.response,
+                        mode: 'chat',
+                        bubbles: [response.response]
+                    });
 
-                if (aiResult.ok) {
-                    addMessage('assistant', response.response, response.character);
-                    updateUI(); 
-                } else {
-                    console.error("AI Validation Failed:", aiResult);
-                    // If rate limit hit, tell user to wait
-                    if (aiResult.reason === 'rate_limit') {
-                        addMessage('system', "System cooling down... please wait 1s.", null, true);
+                    if (aiResult.ok) {
+                        addMessage('assistant', response.response, response.character);
+                        updateUI();
                     } else {
-                        addMessage('system', `Chain rejected response: ${aiResult.reason}`, null, true);
+                        console.warn("Chain rejected response:", aiResult);
+                        // Still show the message to the user, but mark as unsaved
+                        addMessage('assistant', response.response + " (Not saved: Rate Limit)", response.character);
                     }
-                }
-            }, totalDelay);
+                }, 1200); // 1.2s delay for protocol safety
+
+            } catch (err) {
+                console.error("Council Error:", err);
+                addMessage('system', "Council connection failed.", null, true);
+            }
         }
 
         // --- Council Functions ---
@@ -254,7 +257,7 @@
             
             renderCouncil();
             
-            // Random greeting on switch
+            // Random greeting
             const greeting = char.sampleResponses[Math.floor(Math.random() * char.sampleResponses.length)];
             addMessage('assistant', greeting, charId);
         }
@@ -269,8 +272,6 @@
         });
 
         // Run
-        init();
-    </script>
         init();
     </script>
 </body>
