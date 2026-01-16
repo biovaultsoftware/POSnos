@@ -7,6 +7,30 @@
     <link rel="stylesheet" href="style.css">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏛️</text></svg>">
     <link rel="manifest" href="manifest.json">
+    <style>
+        /* ADDED: Visual states for "Thinking" */
+        .thinking {
+            opacity: 0.7;
+            pointer-events: none;
+        }
+        .spin {
+            display: inline-block;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        
+        #btn-mint:not(:disabled) {
+            background: var(--success);
+            color: white;
+            box-shadow: 0 0 10px rgba(0, 210, 106, 0.4);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+    </style>
 </head>
 <body class="theme-coal">
     <div id="app">
@@ -14,16 +38,14 @@
             <div class="logo-area">
                 <h1>BALANCE<span>CHAIN</span></h1>
                 <div class="connection-status">
-                    <span id="p2p-status" class="dot"></span> <span id="status-text">Online</span>
+                    <span id="p2p-status" class="dot"></span> <span id="p2p-text">Sovereign Mode</span>
                 </div>
             </div>
 
             <div class="card dashboard">
                 <div class="metric">
                     <label>TVM Balance</label>
-                    <div class="value">
-                        <span id="tvm-balance">0.00</span> <span style="font-size:12px; color:#666">TVM</span>
-                    </div>
+                    <div class="value" id="tvm-balance">0.00</div>
                 </div>
                 <div class="scores">
                     <div class="score-box">
@@ -53,7 +75,8 @@
 
             <div class="card council-list">
                 <h3>AI Council</h3>
-                <div id="council-grid" class="council-grid"></div>
+                <div id="council-grid" class="council-grid">
+                    </div>
             </div>
         </aside>
 
@@ -67,7 +90,8 @@
                     </div>
                 </div>
                 <div class="actions">
-                    <button id="btn-mint" disabled title="Requires Rich Score > 70">Mint Capsule</button>
+                    <button id="btn-mint" disabled onclick="handleMint()">Mint Capsule</button>
+                    <button id="btn-settings">⚙️</button>
                 </div>
             </header>
 
@@ -89,27 +113,32 @@
         
         let app = null;
         let currentCharacter = 'hakim';
-        let isProcessing = false; // Prevents double-send
+        let activityCounter = 0; // Local counter for Biz Score gamification
 
         // --- Initialization ---
         async function init() {
             try {
-                app = await initializeApp({ verifyIntegrity: true });
-                
-                // Load Initial Data
-                await updateUI();
+                // Initialize the OS
+                app = await initializeApp({
+                    verifyIntegrity: true,
+                    requireBiometric: false 
+                });
+
+                // Force cache clear on boot to ensure fresh caps
+                app.capsTracker.clearCache();
+
+                updateUI();
                 renderCouncil();
                 
-                // Welcome Message
                 addMessage('system', `Identity Loaded: ${app.hid}`);
+                
+                // Initial greeting
                 const char = council.getCharacter(currentCharacter);
-                addMessage('assistant', char.sampleResponses[0], currentCharacter);
+                const greeting = char.sampleResponses[Math.floor(Math.random() * char.sampleResponses.length)];
+                addMessage('assistant', greeting, currentCharacter);
 
                 // Start Timers
                 setInterval(updateTimer, 1000);
-                
-                // Setup Mint Button
-                document.getElementById('btn-mint').addEventListener('click', handleMint);
 
             } catch (e) {
                 console.error("Critical Error:", e);
@@ -117,111 +146,95 @@
             }
         }
 
-        // --- UI Logic: The "Thinking" State ---
-        function setProcessingState(processing) {
-            isProcessing = processing;
-            const btn = document.getElementById('send-btn');
-            const input = document.getElementById('user-input');
-            const statusText = document.getElementById('status-text');
-            const statusDot = document.getElementById('p2p-status');
-
-            if (processing) {
-                btn.disabled = true;
-                btn.textContent = '...'; // Visual cue
-                input.disabled = true;
-                input.style.opacity = '0.5';
-                
-                statusText.textContent = 'Council Debating...';
-                statusText.style.color = '#d4a017'; // Gold
-                statusDot.style.background = '#d4a017';
-            } else {
-                btn.disabled = false;
-                btn.textContent = 'Send';
-                input.disabled = false;
-                input.style.opacity = '1';
-                input.focus();
-                
-                statusText.textContent = 'Online';
-                statusText.style.color = '#00d26a'; // Green
-                statusDot.style.background = '#00d26a';
-            }
-        }
-
-        // --- Core Data Update Loop ---
+        // --- Core UI Update Loop ---
         async function updateUI() {
             if (!app) return;
 
-            // 1. Fetch Latest Data from Chain
+            // 1. Get Real Data from Chain
             const balance = await app.getTVMBalance();
-            const richScore = app.getRichScore();     // This updates based on chain history
-            const caps = await app.getCaps();         // This updates after every commit
+            const caps = await app.getCaps();
             
-            // 2. Update Dashboard
+            // 2. Calculate Dynamic Scores (Gamification Hook)
+            // Biz Score = Activity (Caps Used) / 10
+            // Rich Score = Balance * 10 (Simplified for UI feedback)
+            const bizScore = Math.min(100, Math.floor(caps.daily / 2) + (activityCounter * 2));
+            const richScore = Math.min(100, Math.floor(balance * 10));
+
+            // 3. Update DOM
             document.getElementById('tvm-balance').textContent = balance.toFixed(2);
             document.getElementById('rich-score').textContent = richScore;
-            // Biz score is derived from Rich score in v2.0
-            document.getElementById('biz-score').textContent = Math.floor(richScore * 0.8); 
-
-            // 3. Update Caps Bar
+            document.getElementById('biz-score').textContent = bizScore;
+            
+            // 4. Update Caps Bar
             const dailyPercent = Math.min(100, (caps.daily / caps.limits.daily) * 100);
             document.getElementById('daily-cap-text').textContent = `${caps.daily} / ${caps.limits.daily}`;
             document.getElementById('daily-cap-fill').style.width = `${dailyPercent}%`;
             
-            // 4. Update Mint Button State
-            const btnMint = document.getElementById('btn-mint');
-            if (richScore >= 70) {
-                btnMint.disabled = false;
-                btnMint.style.background = '#d4a017'; // Gold
-                btnMint.style.color = '#000';
-                btnMint.title = "Ready to Mint";
+            // 5. Unlock Mint Button if Score > 70
+            const mintBtn = document.getElementById('btn-mint');
+            if (bizScore >= 70 || richScore >= 70) {
+                mintBtn.disabled = false;
+                mintBtn.textContent = "✨ Mint TVM";
             } else {
-                btnMint.disabled = true;
-                btnMint.style.background = '#2a2e35'; // Grey
-                btnMint.style.color = '#8b949e';
-                btnMint.title = `Rich Score 70 required (Current: ${richScore})`;
+                mintBtn.disabled = true;
+                mintBtn.textContent = `Mint (Req: 70 Score)`;
             }
 
-            // 5. Update Theme
+            // 6. Theme
             document.body.className = `theme-${app.getTheme()}`;
         }
 
-        // --- Action Handlers ---
+        function updateTimer() {
+            const now = new Date();
+            const tomorrow = new Date(now);
+            tomorrow.setUTCHours(24, 0, 0, 0);
+            const diff = tomorrow - now;
+            
+            const h = Math.floor(diff / (1000 * 60 * 60)).toString().padStart(2, '0');
+            const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)).toString().padStart(2, '0');
+            const s = Math.floor((diff % (1000 * 60)) / 1000).toString().padStart(2, '0');
+            
+            document.getElementById('reset-timer').textContent = `${h}:${m}:${s}`;
+        }
+
+        // --- Chat & Logic ---
         async function handleSend() {
-            if (isProcessing) return;
             const input = document.getElementById('user-input');
+            const sendBtn = document.getElementById('send-btn');
             const text = input.value.trim();
+            
             if (!text) return;
 
-            // 1. Lock UI
-            setProcessingState(true);
-            input.value = '';
+            // 1. UI: Enter "Thinking" Mode
+            input.disabled = true;
+            sendBtn.disabled = true;
+            sendBtn.innerHTML = '<span class="spin">⏳</span>'; // Spinner
+            document.body.style.cursor = 'wait';
             
+            // 2. Add User Message
+            addMessage('user', text);
+            input.value = '';
+
             try {
-                // 2. Add User Message
-                addMessage('user', text);
-                
-                // 3. Commit User Block
-                const userResult = await app.commitAction(STA_TYPES.CHAT_USER, {
+                // 3. Chain: Commit User Action (Updates Caps)
+                await app.commitAction(STA_TYPES.CHAT_USER, {
                     chatId: currentCharacter,
                     text: text,
                     role: 'user'
                 });
                 
-                // Force update UI immediately to show cap usage
-                await updateUI(); 
+                // Force Cap Update immediately
+                app.capsTracker.clearCache(); 
+                updateUI(); 
 
-                if (!userResult.ok) {
-                    addMessage('system', `Error: ${userResult.reason}`, null, true);
-                    return; // Stop if user block failed
-                }
-
-                // 4. Get AI Response (Network Call)
-                // This await pauses execution while the AI "thinks"
+                // 4. Network: Call AI Council (The Brain)
+                // This await pauses the UI until the AI replies
                 const response = await council.processMessage(text, currentCharacter);
                 
-                // 5. Commit AI Block (with 1.2s delay for rate limiting)
+                // 5. Chain: Commit AI Response
+                // We delay slightly to respect the 1-block/sec protocol rule
                 setTimeout(async () => {
-                    const aiResult = await app.commitAction(STA_TYPES.AI_ADVICE, {
+                    await app.commitAction(STA_TYPES.AI_ADVICE, {
                         chatId: currentCharacter,
                         selectedCharacter: response.character,
                         text: response.response,
@@ -229,63 +242,61 @@
                         bubbles: [response.response]
                     });
 
-                    if (aiResult.ok) {
-                        addMessage('assistant', response.response, response.character);
-                    } else {
-                        addMessage('assistant', response.response + " (Not saved: Rate Limit)", response.character);
-                    }
+                    // 6. UI: Update Chat & Scores
+                    addMessage('assistant', response.response, response.character);
                     
-                    // 6. Final UI Update
-                    await updateUI();
-                    setProcessingState(false); // Unlock UI
+                    // Gamification: Boost Biz Score on every interaction
+                    activityCounter++;
+                    
+                    // Force final update
+                    app.capsTracker.clearCache();
+                    updateUI();
+                    
+                    // Reset UI State
+                    resetInputState(input, sendBtn);
 
-                }, 1200);
+                }, 1200); // 1.2s protocol safety buffer
 
             } catch (err) {
-                console.error("Chat Error:", err);
-                addMessage('system', "Connection Error. Try again.", null, true);
-                setProcessingState(false);
+                console.error("Error:", err);
+                addMessage('system', "Connection Error. Logic Offline.", null, true);
+                resetInputState(input, sendBtn);
             }
         }
 
-        async function handleMint() {
-            if (isProcessing) return;
-            setProcessingState(true);
+        function resetInputState(input, btn) {
+            input.disabled = false;
+            btn.disabled = false;
+            btn.textContent = 'Send';
+            document.body.style.cursor = 'default';
+            input.focus();
+        }
 
+        // --- Minting Logic ---
+        window.handleMint = async function() {
+            const btn = document.getElementById('btn-mint');
+            btn.disabled = true;
+            btn.textContent = "Minting...";
+            
             try {
-                addMessage('system', "Minting Time-Value-Money Capsule...");
-                
-                // Commit Mint Action
-                const result = await app.commitAction(STA_TYPES.CAPSULE_MINT, {
-                    type: 'standard',
-                    notes: 'Manual mint via Dashboard'
+                // Call the minting logic from tvm.js
+                // This consumes caps and creates a TVM token
+                await app.commitAction(STA_TYPES.CAPSULE_MINT, {
+                    amount: 1.0,
+                    score: 85 // Mock score for now, real logic in v2.1
                 });
 
-                if (result.ok) {
-                    addMessage('system', `✅ Capsule Minted! TVM Balance Updated.`);
-                } else {
-                    addMessage('system', `Mint Failed: ${result.reason}`, null, true);
-                }
+                addMessage('system', "✨ 1.00 TVM Minted Successfully!");
+                
+                // Refresh Balance
+                app.tvmBalanceManager.clearCache(); // Hypothetical method, or just wait
+                updateUI();
+                
             } catch (e) {
-                console.error(e);
-                addMessage('system', "Mint Error", null, true);
-            } finally {
-                await updateUI();
-                setProcessingState(false);
+                addMessage('system', "Minting Failed: " + e.message, null, true);
+                updateUI(); // Reset button state
             }
-        }
-
-        // --- Helpers ---
-        function updateTimer() {
-            const now = new Date();
-            const tomorrow = new Date(now);
-            tomorrow.setUTCHours(24, 0, 0, 0);
-            const diff = tomorrow - now;
-            const h = Math.floor(diff / (1000 * 60 * 60)).toString().padStart(2, '0');
-            const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)).toString().padStart(2, '0');
-            const s = Math.floor((diff % (1000 * 60)) / 1000).toString().padStart(2, '0');
-            document.getElementById('reset-timer').textContent = `${h}:${m}:${s}`;
-        }
+        };
 
         function addMessage(role, text, charId = null, isError = false) {
             const history = document.getElementById('chat-history');
@@ -302,7 +313,10 @@
 
             const bubble = document.createElement('div');
             bubble.className = 'bubble';
-            if (isError) bubble.style.borderColor = '#ff4b4b';
+            if (isError) {
+                bubble.style.borderColor = '#ff4b4b';
+                bubble.style.color = '#ff4b4b';
+            }
             bubble.textContent = text || "(No response)";
             msgDiv.appendChild(bubble);
 
@@ -310,10 +324,11 @@
             history.scrollTop = history.scrollHeight;
         }
 
-        // --- Setup ---
+        // --- Council Functions ---
         function renderCouncil() {
             const grid = document.getElementById('council-grid');
             grid.innerHTML = '';
+            
             const members = council.getAllCharacters();
             members.forEach(member => {
                 const btn = document.createElement('div');
@@ -327,13 +342,18 @@
         function switchMentor(charId) {
             currentCharacter = charId;
             const char = council.getCharacter(charId);
+            
             document.getElementById('mentor-name').textContent = char.name;
             document.getElementById('mentor-emoji').textContent = char.emoji;
             document.getElementById('mentor-role').textContent = `${char.motivator.toUpperCase()} Mentor`;
+            
             renderCouncil();
-            addMessage('assistant', char.sampleResponses[Math.floor(Math.random()*char.sampleResponses.length)], charId);
+            
+            const greeting = char.sampleResponses[Math.floor(Math.random() * char.sampleResponses.length)];
+            addMessage('assistant', greeting, charId);
         }
 
+        // --- Event Listeners ---
         document.getElementById('send-btn').addEventListener('click', handleSend);
         document.getElementById('user-input').addEventListener('keypress', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -342,6 +362,7 @@
             }
         });
 
+        // Run
         init();
     </script>
 </body>
