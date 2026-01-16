@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sovereign Business OS v2.0</title>
     <link rel="stylesheet" href="style.css">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏛️</text></svg>">
@@ -14,14 +14,16 @@
             <div class="logo-area">
                 <h1>BALANCE<span>CHAIN</span></h1>
                 <div class="connection-status">
-                    <span id="p2p-status" class="dot"></span> <span id="p2p-text">System Active</span>
+                    <span id="p2p-status" class="dot"></span> <span id="status-text">Online</span>
                 </div>
             </div>
 
             <div class="card dashboard">
                 <div class="metric">
                     <label>TVM Balance</label>
-                    <div class="value" id="tvm-balance">0.00</div>
+                    <div class="value">
+                        <span id="tvm-balance">0.00</span> <span style="font-size:12px; color:#666">TVM</span>
+                    </div>
                 </div>
                 <div class="scores">
                     <div class="score-box">
@@ -36,11 +38,11 @@
             </div>
 
             <div class="card caps">
-                <h3>Daily Segment Cap</h3>
+                <h3>Daily Caps</h3>
                 <div class="cap-item">
                     <div class="cap-label">
+                        <span>Segments</span>
                         <span id="daily-cap-text">0 / 3600</span>
-                        <span id="daily-cap-percent">0%</span>
                     </div>
                     <div class="progress-bar">
                         <div class="fill" id="daily-cap-fill" style="width: 0%"></div>
@@ -51,8 +53,7 @@
 
             <div class="card council-list">
                 <h3>AI Council</h3>
-                <div id="council-grid" class="council-grid">
-                    </div>
+                <div id="council-grid" class="council-grid"></div>
             </div>
         </aside>
 
@@ -66,8 +67,7 @@
                     </div>
                 </div>
                 <div class="actions">
-                    <button id="btn-mint" class="btn-secondary" disabled title="Need Rich Score 70+">Mint Capsule</button>
-                    <button id="btn-settings" class="icon-btn">⚙️</button>
+                    <button id="btn-mint" disabled title="Requires Rich Score > 70">Mint Capsule</button>
                 </div>
             </header>
 
@@ -77,10 +77,6 @@
                 </div>
             </div>
 
-            <div id="status-bar" class="status-bar hidden">
-                <span class="pulse">●</span> Council is thinking...
-            </div>
-
             <div class="chat-input-area">
                 <textarea id="user-input" placeholder="Ask the council..." rows="1"></textarea>
                 <button id="send-btn">Send</button>
@@ -88,76 +84,32 @@
         </main>
     </div>
 
-    <style>
-        .status-bar {
-            padding: 8px 20px;
-            font-size: 12px;
-            color: var(--accent);
-            background: var(--bg-panel);
-            border-top: 1px solid var(--border);
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .status-bar.hidden { display: none; }
-        
-        .pulse {
-            animation: pulse 1.5s infinite;
-        }
-        @keyframes pulse {
-            0% { opacity: 0.3; }
-            50% { opacity: 1; }
-            100% { opacity: 0.3; }
-        }
-
-        .btn-secondary {
-            background: transparent;
-            border: 1px solid var(--accent);
-            color: var(--accent);
-            padding: 6px 12px;
-            font-size: 12px;
-        }
-        .btn-secondary:disabled {
-            border-color: var(--border);
-            color: var(--text-muted);
-            cursor: not-allowed;
-        }
-        .btn-secondary:hover:not(:disabled) {
-            background: var(--accent-dim);
-        }
-    </style>
-
     <script type="module">
-        import { initializeApp, STA_TYPES, council, mintTVM } from './src/index.js';
+        import { initializeApp, STA_TYPES, council } from './src/index.js';
         
-        // --- App State ---
         let app = null;
         let currentCharacter = 'hakim';
-        let isProcessing = false;
+        let isProcessing = false; // Prevents double-send
 
         // --- Initialization ---
         async function init() {
             try {
-                // Initialize the OS
-                app = await initializeApp({
-                    verifyIntegrity: true,
-                    requireBiometric: false 
-                });
-
-                // Render Initial State
+                app = await initializeApp({ verifyIntegrity: true });
+                
+                // Load Initial Data
                 await updateUI();
                 renderCouncil();
                 
                 // Welcome Message
                 addMessage('system', `Identity Loaded: ${app.hid}`);
-                
                 const char = council.getCharacter(currentCharacter);
-                const greeting = char.sampleResponses[Math.floor(Math.random() * char.sampleResponses.length)];
-                addMessage('assistant', greeting, currentCharacter);
+                addMessage('assistant', char.sampleResponses[0], currentCharacter);
 
                 // Start Timers
-                setInterval(updateTimer, 1000); // Clock
-                setInterval(updateUI, 5000);    // Background sync stats
+                setInterval(updateTimer, 1000);
+                
+                // Setup Mint Button
+                document.getElementById('btn-mint').addEventListener('click', handleMint);
 
             } catch (e) {
                 console.error("Critical Error:", e);
@@ -165,80 +117,174 @@
             }
         }
 
-        // --- UI Updates ---
+        // --- UI Logic: The "Thinking" State ---
+        function setProcessingState(processing) {
+            isProcessing = processing;
+            const btn = document.getElementById('send-btn');
+            const input = document.getElementById('user-input');
+            const statusText = document.getElementById('status-text');
+            const statusDot = document.getElementById('p2p-status');
+
+            if (processing) {
+                btn.disabled = true;
+                btn.textContent = '...'; // Visual cue
+                input.disabled = true;
+                input.style.opacity = '0.5';
+                
+                statusText.textContent = 'Council Debating...';
+                statusText.style.color = '#d4a017'; // Gold
+                statusDot.style.background = '#d4a017';
+            } else {
+                btn.disabled = false;
+                btn.textContent = 'Send';
+                input.disabled = false;
+                input.style.opacity = '1';
+                input.focus();
+                
+                statusText.textContent = 'Online';
+                statusText.style.color = '#00d26a'; // Green
+                statusDot.style.background = '#00d26a';
+            }
+        }
+
+        // --- Core Data Update Loop ---
         async function updateUI() {
             if (!app) return;
 
-            // 1. Fetch Latest Data
+            // 1. Fetch Latest Data from Chain
             const balance = await app.getTVMBalance();
-            const richScore = app.getRichScore(); // This updates as you chat
-            const caps = await app.getCaps();
+            const richScore = app.getRichScore();     // This updates based on chain history
+            const caps = await app.getCaps();         // This updates after every commit
             
-            // 2. Update Dashboard Numbers
+            // 2. Update Dashboard
             document.getElementById('tvm-balance').textContent = balance.toFixed(2);
             document.getElementById('rich-score').textContent = richScore;
-            // Note: Biz Score logic isn't fully wired in v2 yet, keeping placeholder for now
+            // Biz score is derived from Rich score in v2.0
             document.getElementById('biz-score').textContent = Math.floor(richScore * 0.8); 
 
-            // 3. Update Caps Progress
-            const used = caps.daily;
-            const limit = caps.limits.daily;
-            const percent = Math.min(100, Math.floor((used / limit) * 100));
+            // 3. Update Caps Bar
+            const dailyPercent = Math.min(100, (caps.daily / caps.limits.daily) * 100);
+            document.getElementById('daily-cap-text').textContent = `${caps.daily} / ${caps.limits.daily}`;
+            document.getElementById('daily-cap-fill').style.width = `${dailyPercent}%`;
             
-            document.getElementById('daily-cap-text').textContent = `${used} / ${limit}`;
-            document.getElementById('daily-cap-percent').textContent = `${percent}%`;
-            document.getElementById('daily-cap-fill').style.width = `${percent}%`;
-
             // 4. Update Mint Button State
-            const mintBtn = document.getElementById('btn-mint');
+            const btnMint = document.getElementById('btn-mint');
             if (richScore >= 70) {
-                mintBtn.disabled = false;
-                mintBtn.title = "Ready to Mint";
-                mintBtn.style.background = "var(--accent)";
-                mintBtn.style.color = "black";
+                btnMint.disabled = false;
+                btnMint.style.background = '#d4a017'; // Gold
+                btnMint.style.color = '#000';
+                btnMint.title = "Ready to Mint";
             } else {
-                mintBtn.disabled = true;
-                mintBtn.title = `Rich Score 70 Required (Current: ${richScore})`;
-                mintBtn.style.background = "";
-                mintBtn.style.color = "";
+                btnMint.disabled = true;
+                btnMint.style.background = '#2a2e35'; // Grey
+                btnMint.style.color = '#8b949e';
+                btnMint.title = `Rich Score 70 required (Current: ${richScore})`;
             }
 
             // 5. Update Theme
             document.body.className = `theme-${app.getTheme()}`;
         }
 
+        // --- Action Handlers ---
+        async function handleSend() {
+            if (isProcessing) return;
+            const input = document.getElementById('user-input');
+            const text = input.value.trim();
+            if (!text) return;
+
+            // 1. Lock UI
+            setProcessingState(true);
+            input.value = '';
+            
+            try {
+                // 2. Add User Message
+                addMessage('user', text);
+                
+                // 3. Commit User Block
+                const userResult = await app.commitAction(STA_TYPES.CHAT_USER, {
+                    chatId: currentCharacter,
+                    text: text,
+                    role: 'user'
+                });
+                
+                // Force update UI immediately to show cap usage
+                await updateUI(); 
+
+                if (!userResult.ok) {
+                    addMessage('system', `Error: ${userResult.reason}`, null, true);
+                    return; // Stop if user block failed
+                }
+
+                // 4. Get AI Response (Network Call)
+                // This await pauses execution while the AI "thinks"
+                const response = await council.processMessage(text, currentCharacter);
+                
+                // 5. Commit AI Block (with 1.2s delay for rate limiting)
+                setTimeout(async () => {
+                    const aiResult = await app.commitAction(STA_TYPES.AI_ADVICE, {
+                        chatId: currentCharacter,
+                        selectedCharacter: response.character,
+                        text: response.response,
+                        mode: 'chat',
+                        bubbles: [response.response]
+                    });
+
+                    if (aiResult.ok) {
+                        addMessage('assistant', response.response, response.character);
+                    } else {
+                        addMessage('assistant', response.response + " (Not saved: Rate Limit)", response.character);
+                    }
+                    
+                    // 6. Final UI Update
+                    await updateUI();
+                    setProcessingState(false); // Unlock UI
+
+                }, 1200);
+
+            } catch (err) {
+                console.error("Chat Error:", err);
+                addMessage('system', "Connection Error. Try again.", null, true);
+                setProcessingState(false);
+            }
+        }
+
+        async function handleMint() {
+            if (isProcessing) return;
+            setProcessingState(true);
+
+            try {
+                addMessage('system', "Minting Time-Value-Money Capsule...");
+                
+                // Commit Mint Action
+                const result = await app.commitAction(STA_TYPES.CAPSULE_MINT, {
+                    type: 'standard',
+                    notes: 'Manual mint via Dashboard'
+                });
+
+                if (result.ok) {
+                    addMessage('system', `✅ Capsule Minted! TVM Balance Updated.`);
+                } else {
+                    addMessage('system', `Mint Failed: ${result.reason}`, null, true);
+                }
+            } catch (e) {
+                console.error(e);
+                addMessage('system', "Mint Error", null, true);
+            } finally {
+                await updateUI();
+                setProcessingState(false);
+            }
+        }
+
+        // --- Helpers ---
         function updateTimer() {
             const now = new Date();
             const tomorrow = new Date(now);
             tomorrow.setUTCHours(24, 0, 0, 0);
             const diff = tomorrow - now;
-            
             const h = Math.floor(diff / (1000 * 60 * 60)).toString().padStart(2, '0');
             const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)).toString().padStart(2, '0');
             const s = Math.floor((diff % (1000 * 60)) / 1000).toString().padStart(2, '0');
-            
             document.getElementById('reset-timer').textContent = `${h}:${m}:${s}`;
-        }
-
-        // --- UI Helpers ---
-        function setProcessingState(processing) {
-            isProcessing = processing;
-            const input = document.getElementById('user-input');
-            const btn = document.getElementById('send-btn');
-            const status = document.getElementById('status-bar');
-
-            if (processing) {
-                input.disabled = true;
-                btn.disabled = true;
-                status.classList.remove('hidden');
-                btn.textContent = '...';
-            } else {
-                input.disabled = false;
-                btn.disabled = false;
-                status.classList.add('hidden');
-                btn.textContent = 'Send';
-                input.focus();
-            }
         }
 
         function addMessage(role, text, charId = null, isError = false) {
@@ -256,10 +302,7 @@
 
             const bubble = document.createElement('div');
             bubble.className = 'bubble';
-            if (isError) {
-                bubble.style.borderColor = '#ff4b4b';
-                bubble.style.color = '#ff4b4b';
-            }
+            if (isError) bubble.style.borderColor = '#ff4b4b';
             bubble.textContent = text || "(No response)";
             msgDiv.appendChild(bubble);
 
@@ -267,103 +310,10 @@
             history.scrollTop = history.scrollHeight;
         }
 
-        // --- Handlers ---
-        async function handleSend() {
-            if (isProcessing) return;
-
-            const input = document.getElementById('user-input');
-            const text = input.value.trim();
-            if (!text) return;
-
-            // 1. Lock UI
-            setProcessingState(true);
-            
-            try {
-                // 2. Show User Message
-                addMessage('user', text);
-                input.value = '';
-
-                // 3. Commit User Action
-                const userResult = await app.commitAction(STA_TYPES.CHAT_USER, {
-                    chatId: currentCharacter,
-                    text: text,
-                    role: 'user'
-                });
-
-                // Update Stats immediately (Segment usage went up)
-                await updateUI();
-
-                if (!userResult.ok) {
-                    throw new Error(userResult.reason);
-                }
-
-                // 4. Call Council (Wait for Network)
-                const response = await council.processMessage(text, currentCharacter);
-                
-                // 5. Commit Response (with safe delay)
-                setTimeout(async () => {
-                    const aiResult = await app.commitAction(STA_TYPES.AI_ADVICE, {
-                        chatId: currentCharacter,
-                        selectedCharacter: response.character,
-                        text: response.response,
-                        mode: 'chat',
-                        bubbles: [response.response]
-                    });
-
-                    if (aiResult.ok) {
-                        addMessage('assistant', response.response, response.character);
-                    } else {
-                        addMessage('assistant', response.response + " (Sync Pending)", response.character);
-                    }
-                    
-                    // Unlock UI & Update Stats
-                    setProcessingState(false);
-                    await updateUI();
-                }, 1200);
-
-            } catch (err) {
-                console.error("Error:", err);
-                addMessage('system', `Error: ${err.message}`, null, true);
-                setProcessingState(false);
-            }
-        }
-
-        async function handleMint() {
-            if (isProcessing) return;
-            const btn = document.getElementById('btn-mint');
-            btn.textContent = "Minting...";
-            setProcessingState(true);
-
-            try {
-                // Call Mint logic
-                // Note: In v2.0 minting logic is inside tvm.js but we access via app context if exposed
-                // For now, we simulate the minting action via state commit if not exposed directly
-                
-                // Assuming mintTVM is imported or available via app
-                const result = await app.commitAction(STA_TYPES.CAPSULE_MINT, {
-                    amount: 1.0,
-                    hid: app.hid
-                });
-
-                if (result.ok) {
-                    addMessage('system', "✅ Capsule Minted! TVM Balance +1.00");
-                } else {
-                    addMessage('system', `Mint Failed: ${result.reason}`, null, true);
-                }
-            } catch (e) {
-                addMessage('system', "Mint Error: " + e.message, null, true);
-            } finally {
-                btn.textContent = "Mint Capsule";
-                setProcessingState(false);
-                await updateUI();
-            }
-        }
-
-        // --- Council Functions ---
+        // --- Setup ---
         function renderCouncil() {
             const grid = document.getElementById('council-grid');
             grid.innerHTML = '';
-            
             const members = council.getAllCharacters();
             members.forEach(member => {
                 const btn = document.createElement('div');
@@ -375,25 +325,16 @@
         }
 
         function switchMentor(charId) {
-            if (isProcessing) return; // Prevent switching while thinking
-            
             currentCharacter = charId;
             const char = council.getCharacter(charId);
-            
             document.getElementById('mentor-name').textContent = char.name;
             document.getElementById('mentor-emoji').textContent = char.emoji;
             document.getElementById('mentor-role').textContent = `${char.motivator.toUpperCase()} Mentor`;
-            
             renderCouncil();
-            
-            const greeting = char.sampleResponses[Math.floor(Math.random() * char.sampleResponses.length)];
-            addMessage('assistant', greeting, charId);
+            addMessage('assistant', char.sampleResponses[Math.floor(Math.random()*char.sampleResponses.length)], charId);
         }
 
-        // --- Event Listeners ---
         document.getElementById('send-btn').addEventListener('click', handleSend);
-        document.getElementById('btn-mint').addEventListener('click', handleMint);
-        
         document.getElementById('user-input').addEventListener('keypress', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -401,7 +342,6 @@
             }
         });
 
-        // Run
         init();
     </script>
 </body>
